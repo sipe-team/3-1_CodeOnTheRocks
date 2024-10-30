@@ -1,0 +1,89 @@
+name: PR Weekly Checker
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, closed]
+
+jobs:
+  track-and-check-pr:
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v2
+
+      - name: Calculate Week Number based on Date
+        id: setup_week
+        run: |
+          current_date=$(date +%Y-%m-%d)
+          start_date="2024-10-28"
+          week_number=0
+
+          # 각 주차의 기간에 따라 주차 번호 계산
+          if [[ "$current_date" > "2024-10-27" && "$current_date" < "2024-11-03" ]]; then
+            week_number=1
+          elif [[ "$current_date" > "2024-11-02" && "$current_date" < "2024-11-10" ]]; then
+            week_number=2
+          elif [[ "$current_date" > "2024-11-09" && "$current_date" < "2024-11-17" ]]; then
+            week_number=3
+          elif [[ "$current_date" > "2024-11-16" && "$current_date" < "2024-11-24" ]]; then
+            week_number=4
+          elif [[ "$current_date" > "2024-11-23" && "$current_date" < "2024-12-01" ]]; then
+            week_number=5
+          elif [[ "$current_date" > "2024-11-30" && "$current_date" < "2024-12-08" ]]; then
+            week_number=6
+          fi
+
+          echo "Calculated week number: $week_number"
+          echo "::set-output name=week_number::$week_number"
+
+      - name: Set up PR Info and Text Length
+        id: setup
+        run: |
+          pr_body=$(gh pr view ${{ github.event.pull_request.number }} --json body -q ".body")
+          pr_title=$(gh pr view ${{ github.event.pull_request.number }} --json title -q ".title")
+          text_length=$(echo "$pr_body" | sed 's/```[^`]*```//g' | tr -d '\n' | wc -c)
+          
+          # 글자수에 따른 성공/실패 판별
+          if [ "$text_length" -ge 300 ]; then
+            echo "::set-output name=status::성공"
+          else
+            echo "::set-output name=status::실패"
+          fi
+
+          # 제목이 "[Test]"로 시작하면 주차 기록을 저장하지 않음
+          if [[ "$pr_title" == "[Test]"* ]]; then
+            echo "::set-output name=skip_record::true"
+          else
+            echo "::set-output name=skip_record::false"
+          fi
+
+      - name: Comment on PR based on text length
+        if: github.event.action != 'closed' # PR 열기/수정 시 성공 여부를 댓글로 남김
+        run: |
+          status="${{ steps.setup.outputs.status }}"
+          if [ "$status" == "성공" ]; then
+            gh pr comment ${{ github.event.pull_request.number }} --body "PR 본문이 300자 이상입니다. ✔️ PR 조건을 충족했습니다."
+          else
+            gh pr comment ${{ github.event.pull_request.number }} --body "PR 본문이 300자 미만입니다. ❌ PR 조건을 충족하지 않았습니다."
+          fi
+
+      - name: Record weekly status in JSON if PR merged and not [Test]
+        if: github.event.action == 'closed' && github.event.pull_request.merged == true && steps.setup.outputs.skip_record == 'false'
+        run: |
+          week_file=".github/weekly_status.json"
+          user=${{ github.event.pull_request.user.login }}
+          status="${{ steps.setup.outputs.status }}"
+          week="week${{ steps.setup_week.outputs.week_number }}"
+
+          # 주차별 JSON 파일이 없으면 생성
+          if [ ! -f "$week_file" ]; then
+            echo "{}" > "$week_file"
+          fi
+
+          # 주차별 기록 업데이트 (유저별로 저장)
+          updated_json=$(jq --arg user "$user" --arg week "$week" --arg status "$status" \
+            '.[$user][$week] = $status' "$week_file")
+          echo "$updated_json" > "$week_file"
