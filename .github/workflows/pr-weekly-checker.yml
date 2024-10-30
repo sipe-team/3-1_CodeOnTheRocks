@@ -4,6 +4,10 @@ on:
   pull_request:
     types: [opened, edited, reopened, closed]
 
+permissions:
+  contents: write   # 컨텐츠 권한 (PR에 대한 읽기/쓰기 권한)
+  pull-requests: write # PR 관련 권한
+
 jobs:
   track-and-check-pr:
     runs-on: ubuntu-latest
